@@ -11,15 +11,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pprint import pprint
-
+import re
 import warnings
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date, time, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, get_type_hints
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal, get_type_hints
 
 from pydantic import BaseModel, Extra, Field, PrivateAttr  # noqa F401
 
@@ -309,10 +308,11 @@ class GraphObject(BaseModel):
     class Config:
         extra = Extra.allow
 
-    def __init_subclass__(cls, type=None, label=None, labels=None, index=None, db=None):
+    def __init_subclass__(cls, type=None, label=None, labels=None, index=None, db=None, **kwargs):
         """Stores the subclass by type if type is specified, or by class name
         when instantiating a subclass.
         """
+        print((type, label, labels, index, db))
         if type is not None:  # Relationship
             cls._subtypes_[type] = cls
         elif label is not None:  # Node
@@ -331,6 +331,7 @@ class GraphObject(BaseModel):
         or the object returned from the GraphDatabase.
         """
         sub = None
+        print(cls._subtypes_)
         if "_type" in data:  # Relationship
             sub = cls._subtypes_.get(data.get("_type"))
 
@@ -644,69 +645,66 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
 
 class RelationshipMetaclass(BaseModel.__class__):
+    _PAT_CAMEL = re.compile(r'(?<!^)(?=[A-Z])')
+    _type_name_case: Literal["upper", "lower", "title"] = "upper"
+    _type_name_separator: Literal["_", "-", ""] = "_"
 
     def __new__(mcs, name, bases, namespace, **kwargs):  # noqa C901
         """This creates the class `Relationship`. It also creates all
         subclasses of `Relationship`. Whenever a class is defined as a
         subclass of `Relationship`, `self.__new__` is called.
         """
-        def get_base_types() -> Set[str]:
-            base_labels = set()
-            for base in mcs.__bases__:
-                if hasattr(base, "labels"):
-                    base_labels = base_labels.union(base.labels)
-
-            return base_labels
+        print(f"RelationshipMetaclass.__new__ {name} {bases} {namespace}")
+        
+        kwargs["type"] = kwargs.get("type", 
+            # transform name based on class settings
+            getattr(
+                mcs._PAT_CAMEL.sub(mcs._type_name_separator, name), 
+                mcs._type_name_case
+            )()
+        )
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-        cls.type = kwargs.get("type", name)
+        cls.parallel = kwargs.get("parallel", True)
         if name != "Relationship":
-            cls.types = get_base_types().union({cls.type}, kwargs.get("types", set()))
-
-        #     cls.label = kwargs.get("label", name)
-        # if name != "Node":
-        #     cls.labels = get_base_labels().union({cls.label}, kwargs.get("labels", set()))
+            cls.type = kwargs.get("type", name) 
+        
 
         return cls
 
 
-    
-
-
 class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
 
-    _from: Node = PrivateAttr()    
-    _to: Node = PrivateAttr()
-    
+    _start_node: Node = PrivateAttr()
+    _end_node: Node = PrivateAttr()
 
-    _start_node_id: int = PrivateAttr()
     _end_node_id: int = PrivateAttr()
-    
+    _start_node_id: int = PrivateAttr()
     _type: str = PrivateAttr()
 
-    def __init__(self, _from: Node = None, _to: Node = None, **data):
+    def __init__(self, _start_node: Node = None, _end_node: Node = None, **data):
+        def check_and_assign(**kwargs):
+            nonlocal data
+            for node_name, node in kwargs.items():
+                if node:
+                    # check whether the node is same type (or subtype) of defined start/end node
+                    if not issubclass(type(node), get_type_hints(self)[node_name]):
+                        raise GQLAlchemyError(
+                            f"Start node {type(node)} is not of the correct"
+                            f" type {type(get_type_hints(self)[node_name])}"
+                        )
+                    data[f'{node_name}_id'] = node._id
+        
+        check_and_assign(
+            _start_node=_start_node,
+            _end_node=_end_node,
+        )
 
-        if _from:
-            if not issubclass(type(_from), get_type_hints(self)['_from']):
-                raise GQLAlchemyError("Start node is not of the correct type.")
-            data["_start_node_id"] = _from._id
-            
-        if _to: 
-            if not issubclass(type(_to), get_type_hints(self)['_to']):
-                raise GQLAlchemyError("End node is not of the correct type.")
-            data["_end_node_id"] = _to._id
-        print(data)
+
         super().__init__(**data)
         self._start_node_id = data.get("_start_node_id")
         self._end_node_id = data.get("_end_node_id")
-        print(self)
-        # self._type = data.get("_type", getattr(type(self), "type", "Relationship"))
-        self._type = ":".join(sorted(self.types))
-        
-
-    # @property
-    # def _type(self) -> str:
-    #     return ":".join(sorted(self._types))
+        self._type = data.get("_type", getattr(type(self), "type", "Relationship"))
 
     @property
     def _nodes(self) -> Tuple[int, int]:
@@ -734,7 +732,41 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
         If you want to set a relationship._id instead of creating a new
         relationship, use `load_relationship` first.
         """
-        relationship = db.save_relationship(self)
+        relationship = None
+        try:
+            if self.parallel:
+                relationship = db.load_relationship(self)
+            else:
+                _relationships = db.load_relationships(
+                    start_node_id=self._start_node_id,
+                    end_node_id=self._end_node_id,
+                    relationship_type=self._type,
+                    limit=2
+                )
+                print(_relationships)
+                if len(_relationships) > 1:
+                    raise GQLAlchemyError(
+                        f"Found more than one relationship with the same "
+                        f"start_node_id, end_node_id and type for a non-parallel relationship."
+                    )
+
+                if len(_relationships) == 1:
+                    relationship = _relationships[0].get('relationship')
+                
+                # print(relationship)
+            if relationship:
+                self._id = relationship._id
+        except GQLAlchemyError:
+            pass
+
+        # if self.unique:
+        #     relationship = db.load_relationship(self)
+        #     print(('relationship:', relationship))
+        #     if relationship:
+        #         self._id = relationship._id
+
+        relationship = db.save_relationship(self)        
+
         for field in self.__fields__:
             setattr(self, field, getattr(relationship, field))
         self._id = relationship._id
@@ -776,234 +808,3 @@ class Path(GraphObject):
         )
 
 
-
-# class NodeMetaclass(BaseModel.__class__):
-#     def __new__(mcs, name, bases, namespace, **kwargs):  # noqa C901
-#         """This creates the class `Node`. It also creates all subclasses
-#         of `Node`. Whenever a class is defined as a subclass of `Node`,
-#         `MyMeta.__new__` is called.
-#         """
-
-#         def field_in_superclass(field, constraint):
-#             nonlocal bases
-#             for base in bases:
-#                 if field in base.__fields__:
-#                     attrs = base.__fields__[field].field_info.extra
-#                     if constraint in attrs:
-#                         return base
-
-#             return None
-
-#         def get_base_labels() -> Set[str]:
-#             base_labels = set()
-#             nonlocal bases
-#             for base in bases:
-#                 if hasattr(base, "labels"):
-#                     base_labels = base_labels.union(base.labels)
-
-#             return base_labels
-
-#         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-#         cls.index = kwargs.get("index")
-#         cls.label = kwargs.get("label", name)
-#         if name != "Node":
-#             cls.labels = get_base_labels().union({cls.label}, kwargs.get("labels", set()))
-
-#         db = kwargs.get("db")
-#         if cls.index is True:
-#             if db is None:
-#                 raise GQLAlchemyDatabaseMissingInNodeClassError(cls=cls)
-
-#             index = MemgraphIndex(cls.label)
-#             db.create_index(index)
-
-#         for field in cls.__fields__:
-#             attrs = cls.__fields__[field].field_info.extra
-#             field_type = cls.__fields__[field].type_.__name__
-#             label = attrs.get("label", cls.label)
-#             skip_constraints = False
-
-#             if db is None:
-#                 db = attrs.get("db")
-
-#             for constraint in FieldAttrsConstants.list():
-#                 if constraint in attrs and db is None:
-#                     base = field_in_superclass(field, constraint)
-#                     if base is not None:
-#                         cls.__fields__[field].field_info.extra = base.__fields__[field].field_info.extra
-#                         skip_constraints = True
-#                         break
-
-#                     raise GQLAlchemyDatabaseMissingInFieldError(
-#                         constraint=constraint,
-#                         field=field,
-#                         field_type=field_type,
-#                     )
-
-#             if skip_constraints:
-#                 continue
-
-#             if FieldAttrsConstants.INDEX in attrs and attrs[FieldAttrsConstants.INDEX] is True:
-#                 index = MemgraphIndex(label, field)
-#                 db.create_index(index)
-
-#             if FieldAttrsConstants.EXISTS in attrs and attrs[FieldAttrsConstants.EXISTS] is True:
-#                 constraint = MemgraphConstraintExists(label, field)
-#                 db.create_constraint(constraint)
-
-#             if FieldAttrsConstants.UNIQUE in attrs and attrs[FieldAttrsConstants.UNIQUE] is True:
-#                 constraint = MemgraphConstraintUnique(label, field)
-#                 db.create_constraint(constraint)
-
-#             if attrs and "db" in attrs:
-#                 del attrs["db"]
-
-#         return cls
-
-
-# class Node(UniqueGraphObject, metaclass=NodeMetaclass):
-#     _labels: Set[str] = PrivateAttr()
-
-#     def __init__(self, **data):
-#         super().__init__(**data)
-#         self._labels = data.get("_labels", getattr(type(self), "labels", {"Node"}))
-
-#     def __str__(self) -> str:
-#         return "".join(
-#             (
-#                 f"<{type(self).__name__}",
-#                 f" id={self._id}",
-#                 f" labels={self._labels}",
-#                 f" properties={self._properties}",
-#                 ">",
-#             )
-#         )
-
-#     def _get_cypher_unique_fields_or_block(self, variable_name: str) -> str:
-#         """Get's a cypher assignment block using the unique fields."""
-#         cypher_unique_fields = []
-#         for field in self.__fields__:
-#             attrs = self.__fields__[field].field_info.extra
-#             if "unique" in attrs:
-#                 value = getattr(self, field)
-#                 if value is not None:
-#                     cypher_unique_fields.append(f"{variable_name}.{field} = {self.escape_value(value)}")
-
-#         return " " + " OR ".join(cypher_unique_fields) + " "
-
-#     def has_unique_fields(self) -> bool:
-#         """Returns True if the Node has any unique fields."""
-#         for field in self.__fields__:
-#             if "unique" in self.__fields__[field].field_info.extra:
-#                 if getattr(self, field) is not None:
-#                     return True
-#         return False
-
-#     @property
-#     def _label(self) -> str:
-#         return ":".join(sorted(self._labels))
-
-#     def save(self, db: "Database") -> "Node":  # noqa F821
-#         """Saves node to Memgraph.
-#         If the node._id is not None it fetches the node with the same id from
-#         Memgraph and updates it's fields.
-#         If the node has unique fields it fetches the nodes with the same unique
-#         fields from Memgraph and updates it's fields.
-#         Otherwise it creates a new node with the same properties.
-#         Null properties are ignored.
-#         """
-#         node = db.save_node(self)
-#         for field in self.__fields__:
-#             setattr(self, field, getattr(node, field))
-#         self._id = node._id
-#         return self
-
-#     def load(self, db: "Database") -> "Node":  # noqa F821
-#         """Loads a node from Memgraph.
-#         If the node._id is not None it fetches the node from Memgraph with that
-#         internal id.
-#         If the node has unique fields it fetches the node from Memgraph with
-#         those unique fields set.
-#         Otherwise it tries to find any node in Memgraph that has all properties
-#         set to exactly the same values.
-#         If no node is found or no properties are set it raises a GQLAlchemyError.
-#         """
-#         node = db.load_node(self)
-#         for field in self.__fields__:
-#             setattr(self, field, getattr(node, field))
-#         self._id = node._id
-#         return self
-
-
-
-# class RelationshipMetaclass(BaseModel.__class__):
-#     def __new__(mcs, name, bases, namespace, **kwargs):  # noqa C901
-#         """This creates the class `Relationship`. It also creates all
-#         subclasses of `Relationship`. Whenever a class is defined as a
-#         subclass of `Relationship`, `self.__new__` is called.
-#         """
-#         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-#         if name != "Relationship":
-#             cls.type = kwargs.get("type", name)
-
-#         return cls
-
-
-# class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
-#     _end_node_id: int = PrivateAttr()
-#     _start_node_id: int = PrivateAttr()
-#     _type: str = PrivateAttr()
-
-#     def __init__(self, **data):
-#         super().__init__(**data)
-#         self._start_node_id = data.get("_start_node_id")
-#         self._end_node_id = data.get("_end_node_id")
-#         self._type = data.get("_type", getattr(type(self), "type", "Relationship"))
-
-#     @property
-#     def _nodes(self) -> Tuple[int, int]:
-#         return (self._start_node_id, self._end_node_id)
-
-#     def __str__(self) -> str:
-#         return "".join(
-#             (
-#                 f"<{type(self).__name__}",
-#                 f" id={self._id}",
-#                 f" start_node_id={self._start_node_id}",
-#                 f" end_node_id={self._end_node_id}",
-#                 f" nodes={self._nodes}",
-#                 f" type={self._type}",
-#                 f" properties={self._properties}",
-#                 ">",
-#             )
-#         )
-
-#     def save(self, db: "Database") -> "Relationship":  # noqa F821
-#         """Saves a relationship to Memgraph.
-#         If relationship._id is not None it finds the relationship in Memgraph
-#         and updates it's properties with the values in `relationship`.
-#         If relationship._id is None, it creates a new relationship.
-#         If you want to set a relationship._id instead of creating a new
-#         relationship, use `load_relationship` first.
-#         """
-#         relationship = db.save_relationship(self)
-#         for field in self.__fields__:
-#             setattr(self, field, getattr(relationship, field))
-#         self._id = relationship._id
-#         return self
-
-#     def load(self, db: "Database") -> "Relationship":  # noqa F821
-#         """Returns a relationship loaded from Memgraph.
-#         If the relationship._id is not None it fetches the relationship from
-#         Memgraph that has the same internal id.
-#         Otherwise it returns the relationship whose relationship._start_node_id
-#         and relationship._end_node_id and all relationship properties that
-#         are not None match the relationship in Memgraph.
-#         If there is no relationship like that in Memgraph, or if there are
-#         multiple relationships like that in Memgraph, throws GQLAlchemyError.
-#         """
-#         relationship = db.load_relationship(self)
-#         for field in self.__fields__:
-#             setattr(self, field, getattr(relationship, field))
-#         self._id = relationship._id
-#         return self

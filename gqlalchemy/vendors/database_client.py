@@ -156,6 +156,7 @@ class DatabaseClient(ABC):
         If there is more than one result, raises a GQLAlchemyError.
         """
         result = next(query_result, None)
+        print(('result', result))
         next_result = next(query_result, None)
         if result is None:
             raise GQLAlchemyError("No result found. Result list is empty.")
@@ -269,6 +270,26 @@ class DatabaseClient(ABC):
             f"{and_block} RETURN relationship;"
         )
         return self.get_variable_assume_one(results, "relationship")
+
+    def load_relationships(self, 
+        start_node_id: int, 
+        end_node_id: int, 
+        relationship_type: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = None
+        ) -> List[Relationship]:
+        """Loads all relationships between two nodes with the same type."""
+        limit_str = f" LIMIT {limit}" if limit is not None else ""
+        filters_str = f" AND {filters}" if filters is not None else ""
+        results = self.execute_and_fetch(
+            f"MATCH (start_node)-[relationship:{relationship_type}]->(end_node)"
+            f" WHERE id(start_node) = {start_node_id}"
+            f" AND id(end_node) = {end_node_id}"
+            f" {filters_str} "
+            f" RETURN relationship {limit_str};"
+        )
+        return list(results)
+    
 
     @abstractmethod
     def save_relationship(self, relationship: Relationship) -> Optional[Relationship]:
