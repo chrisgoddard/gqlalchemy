@@ -86,6 +86,9 @@ TIMEOUT_ERROR_MESSAGE = "Waited too long for the port {port} on host {host} to s
 DOCKER_TIMEOUT_ERROR_MESSAGE = "Waited too long for the Docker container to start."
 MEMGRAPH_CONNECTION_ERROR_MESSAGE = "The Memgraph process probably died."
 
+ABSTRACT_CLASS_ERROR = """
+{class_name} is an abstract class and shouldn't be instantiated.
+"""
 
 class QueryClause(Enum):
     WHERE = "WHERE"
@@ -197,6 +200,11 @@ class GQLAlchemyFileNotFoundError(GQLAlchemyError):
     def __init__(self, path):
         super().__init__()
         self.message = FILE_NOT_FOUND.format(path=path)
+
+class GQLAlchemyAbstractClassError(GQLAlchemyError):
+    def __init__(self, cls):
+        self.message = ABSTRACT_CLASS_ERROR.format(cls=cls)
+
 
 
 def database_error_handler(func):

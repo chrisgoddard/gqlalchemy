@@ -27,6 +27,7 @@ from gqlalchemy.exceptions import (
     GQLAlchemySubclassNotFoundWarning,
     GQLAlchemyDatabaseMissingInFieldError,
     GQLAlchemyDatabaseMissingInNodeClassError,
+    GQLAlchemyAbstractClassError
 )
 
 # Suppress the warning GQLAlchemySubclassNotFoundWarning
@@ -472,26 +473,16 @@ class NodeMetaclass(BaseModel.__class__):
         `MyMeta.__new__` is called.
         """
 
-        def field_in_superclass(field, constraint):
-            nonlocal bases
-            for base in bases:
-                if field in base.__fields__:
-                    attrs = base.__fields__[field].field_info.extra
-                    if constraint in attrs:
-                        return base
-
-            return None
-
         def get_base_labels() -> Set[str]:
             base_labels = set()
             nonlocal bases
             for base in bases:
-                if hasattr(base, "labels"):
+                if hasattr(base, "labels") and getattr(base, '_is_abstract', False) is False:
                     base_labels = base_labels.union(base.labels)
-
             return base_labels
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
+        cls._is_abstract = kwargs.get('is_abstract', False)
         cls.index = kwargs.get("index")
         cls.label = kwargs.get("label", name)
         if name != "Node":
@@ -502,6 +493,7 @@ class NodeMetaclass(BaseModel.__class__):
 
 class Node(UniqueGraphObject, metaclass=NodeMetaclass):
     _labels: Set[str] = PrivateAttr()
+    
 
     @classmethod
     def register(cls, db: "Database") -> None:
@@ -516,7 +508,7 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
         def field_in_superclass(field, constraint):
             for base in cls.__bases__:
-                if field in base.__fields__:
+                if field in getattr(base, '__fields__', {}):
                     attrs = base.__fields__[field].field_info.extra
                     if constraint in attrs:
                         return base
@@ -572,6 +564,8 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
 
     def __init__(self, **data):
+        if self._is_abstract:
+            raise GQLAlchemyAbstractClassError(cls=self.__class__)
         super().__init__(**data)
         self._labels = data.get("_labels", getattr(type(self), "labels", {"Node"}))
 
@@ -594,7 +588,8 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
             if "unique" in attrs:
                 value = getattr(self, field)
                 if value is not None:
-                    cypher_unique_fields.append(f"{variable_name}.{field} = {self.escape_value(value)}")
+                    cypher_unique_fields.append(
+                        f"{variable_name}.{field} = {self.escape_value(value)}")
 
         return " " + " OR ".join(cypher_unique_fields) + " "
 
@@ -662,6 +657,7 @@ class RelationshipMetaclass(BaseModel.__class__):
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
         cls.parallel = kwargs.get("parallel", True)
+        cls._is_abstract = kwargs.get('is_abstract', False)
         if name != "Relationship":
             cls.type = kwargs.get("type", name) 
         
@@ -679,6 +675,8 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
     _type: str = PrivateAttr()
 
     def __init__(self, _start_node: Node = None, _end_node: Node = None, **data):
+        if self._is_abstract:
+            raise GQLAlchemyAbstractClassError(cls=self.__class__)
         def check_and_assign(**kwargs):
             nonlocal data
             for node_name, node in kwargs.items():
