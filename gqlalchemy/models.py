@@ -312,7 +312,6 @@ class GraphObject(BaseModel):
         """Stores the subclass by type if type is specified, or by class name
         when instantiating a subclass.
         """
-        print((type, label, labels, index, db))
         if type is not None:  # Relationship
             cls._subtypes_[type] = cls
         elif label is not None:  # Node
@@ -331,7 +330,6 @@ class GraphObject(BaseModel):
         or the object returned from the GraphDatabase.
         """
         sub = None
-        print(cls._subtypes_)
         if "_type" in data:  # Relationship
             sub = cls._subtypes_.get(data.get("_type"))
 
@@ -653,9 +651,7 @@ class RelationshipMetaclass(BaseModel.__class__):
         """This creates the class `Relationship`. It also creates all
         subclasses of `Relationship`. Whenever a class is defined as a
         subclass of `Relationship`, `self.__new__` is called.
-        """
-        print(f"RelationshipMetaclass.__new__ {name} {bases} {namespace}")
-        
+        """        
         kwargs["type"] = kwargs.get("type", 
             # transform name based on class settings
             getattr(
@@ -743,7 +739,6 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
                     relationship_type=self._type,
                     limit=2
                 )
-                print(_relationships)
                 if len(_relationships) > 1:
                     raise GQLAlchemyError(
                         f"Found more than one relationship with the same "
@@ -753,17 +748,10 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
                 if len(_relationships) == 1:
                     relationship = _relationships[0].get('relationship')
                 
-                # print(relationship)
             if relationship:
                 self._id = relationship._id
         except GQLAlchemyError:
             pass
-
-        # if self.unique:
-        #     relationship = db.load_relationship(self)
-        #     print(('relationship:', relationship))
-        #     if relationship:
-        #         self._id = relationship._id
 
         relationship = db.save_relationship(self)        
 
