@@ -156,7 +156,6 @@ class DatabaseClient(ABC):
         If there is more than one result, raises a GQLAlchemyError.
         """
         result = next(query_result, None)
-        print(('result', result))
         next_result = next(query_result, None)
         if result is None:
             raise GQLAlchemyError("No result found. Result list is empty.")

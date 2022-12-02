@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date, time, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal, get_type_hints
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal, ClassVar, get_type_hints
 
 from pydantic import BaseModel, Extra, Field, PrivateAttr  # noqa F401
 
@@ -48,6 +48,12 @@ datetimeKwMapping = {
     date: DatetimeKeywords.DATE.value,
 }
 
+
+def _exists(constraint, constraints):
+    for c in constraints:
+        if c.property == constraint.property and c.label == constraint.label:
+            return True
+    return False
 
 def _format_timedelta(duration: timedelta) -> str:
     days = int(duration.total_seconds() // 86400)
@@ -482,7 +488,7 @@ class NodeMetaclass(BaseModel.__class__):
             return base_labels
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-        cls._is_abstract = kwargs.get('is_abstract', False)
+        cls._is_abstract = kwargs.get('abstract', False)
         cls.index = kwargs.get("index")
         cls.label = kwargs.get("label", name)
         if name != "Node":
@@ -494,17 +500,21 @@ class NodeMetaclass(BaseModel.__class__):
 class Node(UniqueGraphObject, metaclass=NodeMetaclass):
     _labels: Set[str] = PrivateAttr()
     
-
     @classmethod
-    def register(cls, db: "Database") -> None:
+    def register(cls, db: "Database", indicies=None, constraints=None) -> None:
         """Register Node in Database Schema and create indexes and constraints"""
+
+        indicies  = indicies or db.get_indexes()
+        
+        constraints =  constraints or db.get_constraints()
 
         if cls.index is True:
             if db is None:
                 raise GQLAlchemyDatabaseMissingInNodeClassError(cls=cls)
 
             index = MemgraphIndex(cls.label)
-            db.create_index(index)
+            if not _exists(index, indicies):
+                db.create_index(index)
 
         def field_in_superclass(field, constraint):
             for base in cls.__bases__:
@@ -540,15 +550,20 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
             if FieldAttrsConstants.INDEX in attrs and attrs[FieldAttrsConstants.INDEX] is True:
                 index = MemgraphIndex(label, field)
-                db.create_index(index)
+                if not _exists(index, indicies):
+                    db.create_index(index)
+    
 
             if FieldAttrsConstants.EXISTS in attrs and attrs[FieldAttrsConstants.EXISTS] is True:
                 constraint = MemgraphConstraintExists(label, field)
-                db.create_constraint(constraint)
+                if not _exists(constraint, constraints):
+                    db.create_constraint(constraint)
 
             if FieldAttrsConstants.UNIQUE in attrs and attrs[FieldAttrsConstants.UNIQUE] is True:
                 constraint = MemgraphConstraintUnique(label, field)
-                db.create_constraint(constraint)
+                if not _exists(constraint, constraints):
+                    db.create_constraint(constraint)
+
 
             if attrs and "db" in attrs:
                 del attrs["db"]        
@@ -657,7 +672,7 @@ class RelationshipMetaclass(BaseModel.__class__):
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
         cls.parallel = kwargs.get("parallel", True)
-        cls._is_abstract = kwargs.get('is_abstract', False)
+        cls._is_abstract = kwargs.get('abstract', False)
         if name != "Relationship":
             cls.type = kwargs.get("type", name) 
         
@@ -677,23 +692,26 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
     def __init__(self, _start_node: Node = None, _end_node: Node = None, **data):
         if self._is_abstract:
             raise GQLAlchemyAbstractClassError(cls=self.__class__)
+        
+        type_hints = get_type_hints(self.__class__)
+
         def check_and_assign(**kwargs):
             nonlocal data
+            nonlocal type_hints
             for node_name, node in kwargs.items():
                 if node:
                     # check whether the node is same type (or subtype) of defined start/end node
-                    if not issubclass(type(node), get_type_hints(self)[node_name]):
+                    if not issubclass(type(node), type_hints.get(node_name)):
                         raise GQLAlchemyError(
                             f"Start node {type(node)} is not of the correct"
-                            f" type {type(get_type_hints(self)[node_name])}"
+                            f" type {type_hints.get(node_name)}"
                         )
                     data[f'{node_name}_id'] = node._id
-        
+    
         check_and_assign(
             _start_node=_start_node,
             _end_node=_end_node,
         )
-
 
         super().__init__(**data)
         self._start_node_id = data.get("_start_node_id")
