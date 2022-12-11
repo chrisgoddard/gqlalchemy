@@ -90,6 +90,7 @@ ABSTRACT_CLASS_ERROR = """
 {class_name} is an abstract class and shouldn't be instantiated.
 """
 
+
 class QueryClause(Enum):
     WHERE = "WHERE"
     SET = "SET"
@@ -201,10 +202,10 @@ class GQLAlchemyFileNotFoundError(GQLAlchemyError):
         super().__init__()
         self.message = FILE_NOT_FOUND.format(path=path)
 
+
 class GQLAlchemyAbstractClassError(GQLAlchemyError):
     def __init__(self, cls):
         self.message = ABSTRACT_CLASS_ERROR.format(cls=cls)
-
 
 
 def database_error_handler(func):

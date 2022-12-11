@@ -27,7 +27,7 @@ from gqlalchemy.exceptions import (
     GQLAlchemySubclassNotFoundWarning,
     GQLAlchemyDatabaseMissingInFieldError,
     GQLAlchemyDatabaseMissingInNodeClassError,
-    GQLAlchemyAbstractClassError
+    GQLAlchemyAbstractClassError,
 )
 
 # Suppress the warning GQLAlchemySubclassNotFoundWarning
@@ -54,6 +54,7 @@ def _exists(constraint, constraints):
         if c.property == constraint.property and c.label == constraint.label:
             return True
     return False
+
 
 def _format_timedelta(duration: timedelta) -> str:
     days = int(duration.total_seconds() // 86400)
@@ -472,7 +473,6 @@ class UniqueGraphObject(GraphObject):
 
 
 class NodeMetaclass(BaseModel.__class__):
-
     def __new__(mcs, name, bases, namespace, **kwargs):  # noqa C901
         """This creates the class `Node`. It also creates all subclasses
         of `Node`. Whenever a class is defined as a subclass of `Node`,
@@ -483,12 +483,12 @@ class NodeMetaclass(BaseModel.__class__):
             base_labels = set()
             nonlocal bases
             for base in bases:
-                if hasattr(base, "labels") and getattr(base, '_is_abstract', False) is False:
+                if hasattr(base, "labels") and getattr(base, "_is_abstract", False) is False:
                     base_labels = base_labels.union(base.labels)
             return base_labels
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-        cls._is_abstract = kwargs.get('abstract', False)
+        cls._is_abstract = kwargs.get("abstract", False)
         cls.index = kwargs.get("index")
         cls.label = kwargs.get("label", name)
         if name != "Node":
@@ -499,14 +499,14 @@ class NodeMetaclass(BaseModel.__class__):
 
 class Node(UniqueGraphObject, metaclass=NodeMetaclass):
     _labels: Set[str] = PrivateAttr()
-    
+
     @classmethod
     def register(cls, db: "Database", indicies=None, constraints=None) -> None:
         """Register Node in Database Schema and create indexes and constraints"""
 
-        indicies  = indicies or db.get_indexes()
-        
-        constraints =  constraints or db.get_constraints()
+        indicies = indicies or db.get_indexes()
+
+        constraints = constraints or db.get_constraints()
 
         if cls.index is True:
             if db is None:
@@ -518,7 +518,7 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
         def field_in_superclass(field, constraint):
             for base in cls.__bases__:
-                if field in getattr(base, '__fields__', {}):
+                if field in getattr(base, "__fields__", {}):
                     attrs = base.__fields__[field].field_info.extra
                     if constraint in attrs:
                         return base
@@ -552,7 +552,6 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
                 index = MemgraphIndex(label, field)
                 if not _exists(index, indicies):
                     db.create_index(index)
-    
 
             if FieldAttrsConstants.EXISTS in attrs and attrs[FieldAttrsConstants.EXISTS] is True:
                 constraint = MemgraphConstraintExists(label, field)
@@ -564,10 +563,8 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
                 if not _exists(constraint, constraints):
                     db.create_constraint(constraint)
 
-
             if attrs and "db" in attrs:
-                del attrs["db"]        
-
+                del attrs["db"]
 
     @classmethod
     def register_all(cls, db: "Database") -> None:
@@ -576,7 +573,6 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
         cls.register(db)
         for _cls in cls.__subclasses__():
             _cls.register_all(db)
-
 
     def __init__(self, **data):
         if self._is_abstract:
@@ -603,8 +599,7 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
             if "unique" in attrs:
                 value = getattr(self, field)
                 if value is not None:
-                    cypher_unique_fields.append(
-                        f"{variable_name}.{field} = {self.escape_value(value)}")
+                    cypher_unique_fields.append(f"{variable_name}.{field} = {self.escape_value(value)}")
 
         return " " + " OR ".join(cypher_unique_fields) + " "
 
@@ -653,7 +648,7 @@ class Node(UniqueGraphObject, metaclass=NodeMetaclass):
 
 
 class RelationshipMetaclass(BaseModel.__class__):
-    _PAT_CAMEL = re.compile(r'(?<!^)(?=[A-Z])')
+    _PAT_CAMEL = re.compile(r"(?<!^)(?=[A-Z])")
     _type_name_case: Literal["upper", "lower", "title"] = "upper"
     _type_name_separator: Literal["_", "-", ""] = "_"
 
@@ -661,21 +656,18 @@ class RelationshipMetaclass(BaseModel.__class__):
         """This creates the class `Relationship`. It also creates all
         subclasses of `Relationship`. Whenever a class is defined as a
         subclass of `Relationship`, `self.__new__` is called.
-        """        
-        kwargs["type"] = kwargs.get("type", 
+        """
+        kwargs["type"] = kwargs.get(
+            "type",
             # transform name based on class settings
-            getattr(
-                mcs._PAT_CAMEL.sub(mcs._type_name_separator, name), 
-                mcs._type_name_case
-            )()
+            getattr(mcs._PAT_CAMEL.sub(mcs._type_name_separator, name), mcs._type_name_case)(),
         )
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
         cls.parallel = kwargs.get("parallel", True)
-        cls._is_abstract = kwargs.get('abstract', False)
+        cls._is_abstract = kwargs.get("abstract", False)
         if name != "Relationship":
-            cls.type = kwargs.get("type", name) 
-        
+            cls.type = kwargs.get("type", name)
 
         return cls
 
@@ -685,14 +677,15 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
     _start_node: Node = PrivateAttr()
     _end_node: Node = PrivateAttr()
 
-    _end_node_id: int = PrivateAttr()
     _start_node_id: int = PrivateAttr()
+    _end_node_id: int = PrivateAttr()
+
     _type: str = PrivateAttr()
 
     def __init__(self, _start_node: Node = None, _end_node: Node = None, **data):
         if self._is_abstract:
             raise GQLAlchemyAbstractClassError(cls=self.__class__)
-        
+
         type_hints = get_type_hints(self.__class__)
 
         def check_and_assign(**kwargs):
@@ -700,14 +693,14 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
             nonlocal type_hints
             for node_name, node in kwargs.items():
                 if node:
-                    # check whether the node is same type (or subtype) of defined start/end node
+                    # check whether the node is same type (or subtype)
+                    # of defined start/end node
                     if not issubclass(type(node), type_hints.get(node_name)):
                         raise GQLAlchemyError(
-                            f"Start node {type(node)} is not of the correct"
-                            f" type {type_hints.get(node_name)}"
+                            f"Start node {type(node)} is not of the correct" f" type {type_hints.get(node_name)}"
                         )
-                    data[f'{node_name}_id'] = node._id
-    
+                    data[f"{node_name}_id"] = node._id
+
         check_and_assign(
             _start_node=_start_node,
             _end_node=_end_node,
@@ -753,7 +746,7 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
                     start_node_id=self._start_node_id,
                     end_node_id=self._end_node_id,
                     relationship_type=self._type,
-                    limit=2
+                    limit=2,
                 )
                 if len(_relationships) > 1:
                     raise GQLAlchemyError(
@@ -762,14 +755,14 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
                     )
 
                 if len(_relationships) == 1:
-                    relationship = _relationships[0].get('relationship')
-                
+                    relationship = _relationships[0].get("relationship")
+
             if relationship:
                 self._id = relationship._id
         except GQLAlchemyError:
             pass
 
-        relationship = db.save_relationship(self)        
+        relationship = db.save_relationship(self)
 
         for field in self.__fields__:
             setattr(self, field, getattr(relationship, field))
@@ -810,5 +803,3 @@ class Path(GraphObject):
                 f" relationships={self._relationships}" ">",
             )
         )
-
-
