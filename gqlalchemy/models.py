@@ -373,7 +373,7 @@ class GraphObject(BaseModel):
         value_type = type(value)
 
         if value is None:
-            "Null"
+            return "Null"
         elif value_type == bool:
             return repr(value)
         elif value_type == int:
@@ -386,7 +386,7 @@ class GraphObject(BaseModel):
             return "[" + ", ".join(self.escape_value(val, True) for val in value) + "]"
         elif value_type == dict:
             return "{" + ", ".join(f"{val}: {self.escape_value(val, True)}" for key, val in value.items()) + "}"
-        if isinstance(value, (timedelta, time, datetime, date)):
+        elif isinstance(value, (timedelta, time, datetime, date)):
             return f"{datetimeKwMapping[value_type]}('{_format_timedelta(value) if isinstance(value, timedelta) else value.isoformat()}')"
         else:
             raise GQLAlchemyError(
@@ -709,11 +709,16 @@ class Relationship(UniqueGraphObject, metaclass=RelationshipMetaclass):
         super().__init__(**data)
         self._start_node_id = data.get("_start_node_id")
         self._end_node_id = data.get("_end_node_id")
+        self._start_node = _start_node
+        self._end_node = _end_node
         self._type = data.get("_type", getattr(type(self), "type", "Relationship"))
 
     @property
     def _nodes(self) -> Tuple[int, int]:
         return (self._start_node_id, self._end_node_id)
+
+    def nodes(self) -> Tuple[Node, Node]:
+        return (self._start_node, self._end_node)
 
     def __str__(self) -> str:
         return "".join(
