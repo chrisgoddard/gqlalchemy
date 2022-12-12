@@ -79,18 +79,26 @@ class MemgraphConnection(Connection):
 
     @database_error_handler
     def execute(self, query: str) -> None:
-        print(query)
+        # print(query)
         """Executes Cypher query without returning any results."""
         cursor = self._connection.cursor()
-        cursor.execute(query)
-        cursor.fetchall()
+        try:
+            cursor.execute(query)
+            cursor.fetchall()
+        except Exception as e:
+            print(query)
+            raise e
 
     @database_error_handler
     def execute_and_fetch(self, query: str) -> Iterator[Dict[str, Any]]:
-        print(query)
+        # print(query)
         """Executes Cypher query and returns iterator of results."""
         cursor = self._connection.cursor()
-        cursor.execute(query)
+        try:
+            cursor.execute(query)
+        except Exception as e:
+            print(query)
+            raise e
         while True:
             row = cursor.fetchone()
             if row is None:
