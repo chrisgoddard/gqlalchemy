@@ -147,7 +147,7 @@ class DatabaseClient(ABC):
         set to the values in the `node` object.
         """
         return self.execute_and_fetch(
-            f"MATCH (node: {node._label})" f" WHERE {node._get_cypher_unique_fields_or_block('node')}" f" RETURN node;"
+            f"MATCH (node)" f" WHERE {node._get_cypher_unique_fields_or_block('node')}" f" RETURN node;"
         )
 
     def get_variable_assume_one(self, query_result: Iterator[Dict[str, Any]], variable_name: str) -> Any:
@@ -195,8 +195,10 @@ class DatabaseClient(ABC):
     def save_node_with_id(self, node: Node) -> Optional[Node]:
         """Saves a node to the database using the internal id."""
         results = self.execute_and_fetch(
-            f"MATCH (node: {node._label})"
+            # f"MATCH (node: {node._label})"
+            f"MATCH (node)"
             f" WHERE id(node) = {node._id}"
+            f" SET node:{node._label}"
             f" {node._get_cypher_set_properties('node')}"
             f" RETURN node;"
         )
@@ -219,13 +221,13 @@ class DatabaseClient(ABC):
     def load_node_with_all_properties(self, node: Node) -> Optional[Node]:
         """Loads a node from the database with all equal property values."""
         results = self.execute_and_fetch(
-            f"MATCH (node: {node._label}) WHERE {node._get_cypher_fields_and_block('node')} RETURN node;"
+            f"MATCH (node) WHERE {node._get_cypher_fields_and_block('node')} RETURN node;"
         )
         return self.get_variable_assume_one(results, "node")
 
     def load_node_with_id(self, node: Node) -> Optional[Node]:
         """Loads a node with the same internal database id."""
-        results = self.execute_and_fetch(f"MATCH (node: {node._label}) WHERE id(node) = {node._id} RETURN node;")
+        results = self.execute_and_fetch(f"MATCH (node) WHERE id(node) = {node._id} RETURN node;")
 
         return self.get_variable_assume_one(results, "node")
 

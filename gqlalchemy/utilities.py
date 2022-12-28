@@ -74,6 +74,7 @@ def to_cypher_value(value: Any, config: NetworkXCypherConfig = None) -> str:
         return str(value)
 
     if isinstance(value, (timedelta, time, datetime, date)):
+        value = value.replace(microsecond=0, tzinfo=None)
         return f"{datetimeKwMapping[value_type]}('{_format_timedelta(value) if isinstance(value, timedelta) else value.isoformat()}')"
 
     if value_type == str and value.lower() in ["true", "false", "null"]:

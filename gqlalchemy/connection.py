@@ -26,6 +26,19 @@ from gqlalchemy.models import Node, Path, Relationship
 
 __all__ = ("Connection",)
 
+import datetime
+import logging
+FORMAT = "%(levelname)s %(thread)d %(asctime)s (%(module)s.%(filename)s:%(funcName)s:%(lineno)d) %(message)s"
+# logging.basicConfig(format=FORMAT)
+logger = logging.getLogger('memgraph')
+logger.setLevel(logging.DEBUG)
+# sh = logging.StreamHandler(
+#     open(f'gqlalchemy-{datetime.datetime.now().replace(microsecond=0, second=0).isoformat()}.log', 'w')
+# )
+# sh.setLevel(logging.DEBUG)
+# sh.setFormatter(logging.Formatter(FORMAT))
+# logger.addHandler(sh)
+
 
 class Connection(ABC):
     def __init__(
@@ -72,13 +85,19 @@ class MemgraphConnection(Connection):
         lazy: bool = False,
     ):
         super().__init__(
-            host=host, port=port, username=username, password=password, encrypted=encrypted, client_name=client_name
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            encrypted=encrypted,
+            client_name=client_name
         )
         self.lazy = lazy
         self._connection = self._create_connection()
 
     @database_error_handler
     def execute(self, query: str) -> None:
+        logger.debug(query)
         # print(query)
         """Executes Cypher query without returning any results."""
         cursor = self._connection.cursor()
@@ -86,24 +105,27 @@ class MemgraphConnection(Connection):
             cursor.execute(query)
             cursor.fetchall()
         except Exception as e:
-            print(query)
+            logger.error(f'Error {e} on query {query}')
             raise e
 
     @database_error_handler
     def execute_and_fetch(self, query: str) -> Iterator[Dict[str, Any]]:
+        logger.debug(query)
         # print(query)
         """Executes Cypher query and returns iterator of results."""
         cursor = self._connection.cursor()
         try:
             cursor.execute(query)
         except Exception as e:
-            print(query)
+            logger.error(f'Error {e} on query {query}')
             raise e
         while True:
             row = cursor.fetchone()
             if row is None:
                 break
-            yield {dsc.name: _convert_memgraph_value(row[index]) for index, dsc in enumerate(cursor.description)}
+            r = {dsc.name: _convert_memgraph_value(row[index]) for index, dsc in enumerate(cursor.description)}
+            logger.debug(r)
+            yield r
 
     def is_active(self) -> bool:
         """Returns True if connection is active and can be used."""

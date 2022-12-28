@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date, time, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal, ClassVar, get_type_hints
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal, get_type_hints
 
 from pydantic import BaseModel, Extra, Field, PrivateAttr  # noqa F401
 
@@ -387,6 +387,8 @@ class GraphObject(BaseModel):
         elif value_type == dict:
             return "{" + ", ".join(f"{val}: {self.escape_value(val, True)}" for key, val in value.items()) + "}"
         elif isinstance(value, (timedelta, time, datetime, date)):
+            if hasattr(value, 'tzinfo'):
+                value = value.replace(tzinfo=None)
             return f"{datetimeKwMapping[value_type]}('{_format_timedelta(value) if isinstance(value, timedelta) else value.isoformat()}')"
         else:
             raise GQLAlchemyError(

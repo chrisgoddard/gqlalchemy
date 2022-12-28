@@ -46,6 +46,19 @@ MG_ENCRYPTED = os.getenv("MG_ENCRYPT", "false").lower() == "true"
 MG_CLIENT_NAME = os.getenv("MG_CLIENT_NAME", "GQLAlchemy")
 MG_LAZY = os.getenv("MG_LAZY", "false").lower() == "true"
 
+import datetime
+import logging
+FORMAT = "%(levelname)s %(thread)d %(asctime)s (%(module)s.%(filename)s:%(funcName)s:%(lineno)d) %(message)s"
+# logging.basicConfig(format=FORMAT)
+logger = logging.getLogger('memgraph')
+logger.setLevel(logging.DEBUG)
+# sh = logging.StreamHandler(
+#     open(f'gqlalchemy-{datetime.datetime.now().replace(microsecond=0, second=0).isoformat()}.log', 'w')
+# )
+# sh.setLevel(logging.DEBUG)
+# sh.setFormatter(logging.Formatter(FORMAT))
+# logger.addHandler(sh)
+
 
 class MemgraphConstants:
     CONSTRAINT_TYPE = "constraint type"
@@ -232,23 +245,35 @@ class Memgraph(DatabaseClient):
         Null properties are ignored.
         """
         result = None
+        logger.debug(f"Saving node: {node}")
         if node._id is not None:
             result = self.save_node_with_id(node)
+            logger.debug(f"Saved node with id: {result}")
         elif node.has_unique_fields():
             matching_nodes = list(self._get_nodes_with_unique_fields(node))
+            logger.debug(f"Matching nodes: {matching_nodes}")
             if len(matching_nodes) > 1:
                 raise GQLAlchemyUniquenessConstraintError(
                     f"Uniqueness constraints match multiple nodes: {matching_nodes}"
                 )
             elif len(matching_nodes) == 1:
                 node._id = matching_nodes[0]["node"]._id
+                logger.debug(f"Found matching node: {node._id}")
+                # TODO: check if the node has the same properties as the matching node
+
+                # if matching_nodes[0]["node"].dict() != node.dict():
                 result = self.save_node_with_id(node)
+                logger.debug(f"Saved node with id: {result}")
+
             else:
                 result = self.create_node(node)
+                logger.debug(f"Created node: {result}")
         else:
             result = self.create_node(node)
+            logger.debug(f"Created node: {result}")
 
         result = self._save_node_properties_on_disk(node, result)
+        logger.debug(f"Saved node properties on disk: {result}")
         return result
 
     def _save_node_properties_on_disk(self, node: Node, result: Node) -> Node:
@@ -350,14 +375,30 @@ class Memgraph(DatabaseClient):
         If you want to set a relationship._id instead of creating a new
         relationship, use `load_relationship` first.
         """
+        # breakpoint()
         if relationship._id is not None:
             result = self.save_relationship_with_id(relationship)
-        elif relationship._start_node_id is not None and relationship._end_node_id is not None:
-            result = self.create_relationship(relationship)
+            logger.debug(f"Saved relationship with id: {result}.")
         else:
-            raise GQLAlchemyError("Can't create a relationship without start_node_id and end_node_id.")
+            if not relationship._start_node_id:
+                relationship._start_node.save(db=self)
+                relationship._start_node_id = relationship._start_node._id
+                logger.debug(f"Saved start node with id: {relationship._start_node_id}.")
+
+            if not relationship._end_node_id:
+                relationship._end_node.save(db=self)
+                relationship._end_node_id = relationship._end_node._id
+                logger.debug(f"Saved end node with id: {relationship._end_node_id}.")
+
+            if relationship._start_node_id is not None \
+                    and relationship._end_node_id is not None:
+                result = self.create_relationship(relationship)
+                logger.debug(f"Created relationship with id: {result}.")
+            else:
+                raise GQLAlchemyError("Can't create a relationship without start_node_id and end_node_id.")
 
         result = self._save_relationship_properties_on_disk(relationship, result)
+        logger.debug(f"Saved relationship properties on disk: {result}.")
         return result
 
     def _save_relationship_properties_on_disk(self, relationship: Relationship, result: Relationship) -> Relationship:
